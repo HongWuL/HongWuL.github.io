@@ -1,289 +1,107 @@
-<!DOCTYPE html>
-<html lang=en>
-<head>
-    <!-- so meta -->
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="HandheldFriendly" content="True">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-    <meta property="og:type" content="article">
-<meta property="og:title" content="brpc实现原理(1)-DoublyBufferedData">
-<meta property="og:url" content="http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/index.html">
-<meta property="og:site_name" content="Hexo">
-<meta property="og:locale" content="en_US">
-<meta property="article:published_time" content="2024-03-22T15:30:28.000Z">
-<meta property="article:modified_time" content="2024-03-22T15:30:28.012Z">
-<meta property="article:author" content="Lyu">
-<meta name="twitter:card" content="summary">
-    
-    
-      
-        
-          <link rel="shortcut icon" href="/images/favicon.ico">
-        
-      
-      
-        
-          <link rel="icon" type="image/png" href="/images/favicon-192x192.png" sizes="192x192">
-        
-      
-      
-        
-          <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png">
-        
-      
-    
-    <!-- title -->
-    <title>brpc实现原理(1)-DoublyBufferedData</title>
-    <!-- async scripts -->
-    <!-- Google Analytics -->
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><meta><title>brpc实现原理(1)-DoublyBufferedData - Hexo</title><link rel="manifest" href="/manifest.json"><meta name="application-name" content="Lyu"><meta name="msapplication-TileImage" content="/img/favicon.svg"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Lyu"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="description" content="DoublyBufferedDataDoublyBufferedData(简称DBD)是一个brpc中实现的双缓冲区+Thread Local缓存的数据结构，主要用于多读少写的场景，如负载均衡场景：每次请求都需要选择合适的下游节点，但下游服务器列表更新不可能很频繁。本文以brpc release-1.2.0的DBD代码为主进行分析，因为这个版本的代码比较简洁，后续版本整体实现思想没变，只是针对一些"><meta property="og:type" content="blog"><meta property="og:title" content="brpc实现原理(1)-DoublyBufferedData"><meta property="og:url" content="http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><meta property="og:site_name" content="Hexo"><meta property="og:description" content="DoublyBufferedDataDoublyBufferedData(简称DBD)是一个brpc中实现的双缓冲区+Thread Local缓存的数据结构，主要用于多读少写的场景，如负载均衡场景：每次请求都需要选择合适的下游节点，但下游服务器列表更新不可能很频繁。本文以brpc release-1.2.0的DBD代码为主进行分析，因为这个版本的代码比较简洁，后续版本整体实现思想没变，只是针对一些"><meta property="og:locale" content="zh_CN"><meta property="og:image" content="https://pic.imgdb.cn/item/660020819f345e8d037b0205.png"><meta property="og:image" content="https://pic.imgdb.cn/item/660020829f345e8d037b072b.pngg"><meta property="og:image" content="https://pic.imgdb.cn/item/660020829f345e8d037b0c50.png"><meta property="article:published_time" content="2024-03-22T15:30:28.000Z"><meta property="article:modified_time" content="2024-03-24T13:06:32.792Z"><meta property="article:author" content="Lyu"><meta property="article:tag" content="c++,brpc,微服务"><meta property="twitter:card" content="summary"><meta property="twitter:image:src" content="https://pic.imgdb.cn/item/660020819f345e8d037b0205.png"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","mainEntityOfPage":{"@type":"WebPage","@id":"http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"},"headline":"brpc实现原理(1)-DoublyBufferedData","image":["https://pic.imgdb.cn/item/660020819f345e8d037b0205.png","https://pic.imgdb.cn/item/660020829f345e8d037b0c50.png"],"datePublished":"2024-03-22T15:30:28.000Z","dateModified":"2024-03-24T13:06:32.792Z","author":{"@type":"Person","name":"Lyu"},"publisher":{"@type":"Organization","name":"Hexo","logo":{"@type":"ImageObject","url":"http://example.com/img/logo.svg"}},"description":"DoublyBufferedDataDoublyBufferedData(简称DBD)是一个brpc中实现的双缓冲区+Thread Local缓存的数据结构，主要用于多读少写的场景，如负载均衡场景：每次请求都需要选择合适的下游节点，但下游服务器列表更新不可能很频繁。本文以brpc release-1.2.0的DBD代码为主进行分析，因为这个版本的代码比较简洁，后续版本整体实现思想没变，只是针对一些"}</script><link rel="canonical" href="http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><link rel="icon" href="/img/favicon.svg"><link rel="stylesheet" href="https://use.fontawesome.com/releases/v6.0.0/css/all.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.7.0/styles/atom-one-light.css"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;600&amp;family=Source+Code+Pro"><link rel="stylesheet" href="/css/default.css"><style>body>.footer,body>.navbar,body>.section{opacity:0}</style><!--!--><!--!--><!--!--><!--!--><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cookieconsent@3.1.1/build/cookieconsent.min.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lightgallery@1.10.0/dist/css/lightgallery.min.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/justifiedGallery@3.8.1/dist/css/justifiedGallery.min.css"><!--!--><!--!--><style>.pace{-webkit-pointer-events:none;pointer-events:none;-webkit-user-select:none;-moz-user-select:none;user-select:none}.pace-inactive{display:none}.pace .pace-progress{background:#3273dc;position:fixed;z-index:2000;top:0;right:100%;width:100%;height:2px}</style><script src="https://cdn.jsdelivr.net/npm/pace-js@1.2.4/pace.min.js"></script><!--!--><!--!--><!-- hexo injector head_end start --><script>
+  (function () {
+      function switchTab() {
+          if (!location.hash) {
+            return;
+          }
 
+          const id = '#' + CSS.escape(location.hash.substring(1));
+          const $tabMenu = document.querySelector(`.tabs a[href="${id}"]`);
+          if (!$tabMenu) {
+            return;
+          }
 
-    <!-- Umami Analytics -->
+          const $tabMenuContainer = $tabMenu.parentElement.parentElement;
+          Array.from($tabMenuContainer.children).forEach($menu => $menu.classList.remove('is-active'));
+          Array.from($tabMenuContainer.querySelectorAll('a'))
+              .map($menu => document.getElementById($menu.getAttribute("href").substring(1)))
+              .forEach($content => $content.classList.add('is-hidden'));
 
-
-    <!-- styles -->
-    
-<link rel="stylesheet" href="/css/style.css">
-
-    <!-- persian styles -->
-    
-    <!-- rss -->
-    
-    
-	<!-- mathjax -->
-	
-<meta name="generator" content="Hexo 7.1.1"></head>
-
-<body class="max-width mx-auto px3 ltr">
-    
-      <div id="header-post">
-  <a id="menu-icon" href="#" aria-label="Menu"><i class="fa-solid fa-bars fa-lg"></i></a>
-  <a id="menu-icon-tablet" href="#" aria-label="Menu"><i class="fa-solid fa-bars fa-lg"></i></a>
-  <a id="top-icon-tablet" href="#" aria-label="Top" onclick="$('html, body').animate({ scrollTop: 0 }, 'fast');" style="display:none;"><i class="fa-solid fa-chevron-up fa-lg"></i></a>
-  <span id="menu">
-    <span id="nav">
-      <ul>
-        <!--
-       --><li><a href="/">Home</a></li><!--
-     --><!--
-       --><li><a href="/about/">About</a></li><!--
-     --><!--
-       --><li><a href="/archives/">Writing</a></li><!--
-     --><!--
-       --><li><a target="_blank" rel="noopener" href="https://github.com/HongWuL">Projects</a></li><!--
-     --><!--
-       --><li><a href="/search/">Search</a></li><!--
-     -->
-      </ul>
-    </span>
-    <br/>
-    <span id="actions">
-      <ul>
-        
-        
-        <li><a class="icon" aria-label="Next post" href="/2024/02/29/hello-world/"><i class="fa-solid fa-chevron-right" aria-hidden="true" onmouseover="$('#i-next').toggle();" onmouseout="$('#i-next').toggle();"></i></a></li>
-        
-        <li><a class="icon" aria-label="Back to top" href="#" onclick="$('html, body').animate({ scrollTop: 0 }, 'fast');"><i class="fa-solid fa-chevron-up" aria-hidden="true" onmouseover="$('#i-top').toggle();" onmouseout="$('#i-top').toggle();"></i></a></li>
-        <li><a class="icon" aria-label="Share post" href="#"><i class="fa-solid fa-share-alt" aria-hidden="true" onmouseover="$('#i-share').toggle();" onmouseout="$('#i-share').toggle();" onclick="$('#share').toggle();return false;"></i></a></li>
-      </ul>
-      <span id="i-prev" class="info" style="display:none;">Previous post</span>
-      <span id="i-next" class="info" style="display:none;">Next post</span>
-      <span id="i-top" class="info" style="display:none;">Back to top</span>
-      <span id="i-share" class="info" style="display:none;">Share post</span>
-    </span>
-    <br/>
-    <div id="share" style="display: none">
-      <ul>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.facebook.com/sharer.php?u=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><i class="fab fa-facebook " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://twitter.com/share?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&text=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-twitter " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.linkedin.com/shareArticle?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-linkedin " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://pinterest.com/pin/create/bookmarklet/?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&is_video=false&description=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-pinterest " aria-hidden="true"></i></a></li>
-  <li><a class="icon" href="mailto:?subject=brpc实现原理(1)-DoublyBufferedData&body=Check out this article: http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><i class="fa-solid fa-envelope " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://getpocket.com/save?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-get-pocket " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://reddit.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-reddit " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.stumbleupon.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-stumbleupon " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://digg.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-digg " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.tumblr.com/share/link?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&name=brpc实现原理(1)-DoublyBufferedData&description="><i class="fab fa-tumblr " aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://news.ycombinator.com/submitlink?u=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&t=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-hacker-news " aria-hidden="true"></i></a></li>
-</ul>
-
-    </div>
-    
-    
-  </span>
-</div>
-
-    
-    <div class="content index py4 ">
-        
-        <article class="post h-entry" itemscope itemtype="http://schema.org/BlogPosting">
-  <header>
-    
-    <h1 class="posttitle p-name" itemprop="name headline">
-        brpc实现原理(1)-DoublyBufferedData
-    </h1>
-
-
-
-    <div class="meta">
-      <span class="author p-author h-card" itemprop="author" itemscope itemtype="http://schema.org/Person">
-        <span class="p-name" itemprop="name">Lyu</span>
-      </span>
-      
-    <div class="postdate">
-      
-        <time datetime="2024-03-22T15:30:28.000Z" class="dt-published" itemprop="datePublished">2024-03-22</time>
-        
-      
-    </div>
-
-
-      
-
-      
-
-    </div>
-  </header>
-  
-
-  <div class="content e-content" itemprop="articleBody">
-    
-  </div>
-</article>
-
-
-
-        
-          <div id="footer-post-container">
-  <div id="footer-post">
-
-    <div id="nav-footer" style="display: none">
-      <ul>
-        
-          <li><a href="/">Home</a></li>
-        
-          <li><a href="/about/">About</a></li>
-        
-          <li><a href="/archives/">Writing</a></li>
-        
-          <li><a target="_blank" rel="noopener" href="https://github.com/HongWuL">Projects</a></li>
-        
-          <li><a href="/search/">Search</a></li>
-        
-      </ul>
-    </div>
-
-    
-    
-
-    <div id="share-footer" style="display: none">
-      <ul>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.facebook.com/sharer.php?u=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><i class="fab fa-facebook fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://twitter.com/share?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&text=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-twitter fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.linkedin.com/shareArticle?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-linkedin fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://pinterest.com/pin/create/bookmarklet/?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&is_video=false&description=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-pinterest fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" href="mailto:?subject=brpc实现原理(1)-DoublyBufferedData&body=Check out this article: http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/"><i class="fa-solid fa-envelope fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://getpocket.com/save?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-get-pocket fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://reddit.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-reddit fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.stumbleupon.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-stumbleupon fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://digg.com/submit?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&title=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-digg fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="http://www.tumblr.com/share/link?url=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&name=brpc实现原理(1)-DoublyBufferedData&description="><i class="fab fa-tumblr fa-lg" aria-hidden="true"></i></a></li>
-  <li><a class="icon" target="_blank" rel="noopener" href="https://news.ycombinator.com/submitlink?u=http://example.com/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/&t=brpc实现原理(1)-DoublyBufferedData"><i class="fab fa-hacker-news fa-lg" aria-hidden="true"></i></a></li>
-</ul>
-
-    </div>
-
-    <div id="actions-footer">
-        <a id="menu" class="icon" href="#" onclick="$('#nav-footer').toggle();return false;"><i class="fa-solid fa-bars fa-lg" aria-hidden="true"></i> Menu</a>
-        
-        <a id="share" class="icon" href="#" onclick="$('#share-footer').toggle();return false;"><i class="fa-solid fa-share-alt fa-lg" aria-hidden="true"></i> Share</a>
-        <a id="top" style="display:none" class="icon" href="#" onclick="$('html, body').animate({ scrollTop: 0 }, 'fast');"><i class="fa-solid fa-chevron-up fa-lg" aria-hidden="true"></i> Top</a>
-    </div>
-
-  </div>
-</div>
-
-        
-        <footer id="footer">
-  <div class="footer-left">
-    Copyright &copy;
-    
-    
-    2016-2024
-    Lyu
-  </div>
-  <div class="footer-right">
-    <nav>
-      <ul>
-        <!--
-       --><li><a href="/">Home</a></li><!--
-     --><!--
-       --><li><a href="/about/">About</a></li><!--
-     --><!--
-       --><li><a href="/archives/">Writing</a></li><!--
-     --><!--
-       --><li><a target="_blank" rel="noopener" href="https://github.com/HongWuL">Projects</a></li><!--
-     --><!--
-       --><li><a href="/search/">Search</a></li><!--
-     -->
-      </ul>
-    </nav>
-  </div>
-</footer>
-
-    </div>
-    <!-- styles -->
-
-
-
-  <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" onload="this.onload=null;this.rel='stylesheet'"/>
-
-
-    <!-- jquery -->
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js" crossorigin="anonymous"></script>
-
-
-
-
-<!-- clipboard -->
-
-  
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.7/clipboard.min.js" crossorigin="anonymous"></script>
-  
-  <script type="text/javascript">
-  $(function() {
-    // copy-btn HTML
-    var btn = "<span class=\"btn-copy tooltipped tooltipped-sw\" aria-label=\"Copy to clipboard!\">";
-    btn += '<i class="fa-regular fa-clone"></i>';
-    btn += '</span>';
-    // mount it!
-    $(".highlight table").before(btn);
-    var clip = new ClipboardJS('.btn-copy', {
-      text: function(trigger) {
-        return Array.from(trigger.nextElementSibling.querySelectorAll('.code')).reduce((str,it)=>str+it.innerText+'\n','')
+          if ($tabMenu) {
+              $tabMenu.parentElement.classList.add('is-active');
+          }
+          const $activeTab = document.querySelector(id);
+          if ($activeTab) {
+              $activeTab.classList.remove('is-hidden');
+          }
       }
-    });
-    clip.on('success', function(e) {
-      e.trigger.setAttribute('aria-label', "Copied!");
-      e.clearSelection();
-    })
-  })
-  </script>
+      switchTab();
+      window.addEventListener('hashchange', switchTab, false);
+  })();
+  </script><!-- hexo injector head_end end --><meta name="generator" content="Hexo 7.1.1"></head><body class="is-2-column"><nav class="navbar navbar-main"><div class="container navbar-container"><div class="navbar-brand justify-content-center"><a class="navbar-item navbar-logo" href="/"><img src="/img/logo.svg" alt="Hexo" height="28"></a></div><div class="navbar-menu"><div class="navbar-start"><a class="navbar-item" href="/">Home</a><a class="navbar-item" href="/archives">Archives</a><a class="navbar-item" href="/categories">Categories</a><a class="navbar-item" href="/tags">Tags</a><a class="navbar-item" href="/about">About</a></div><div class="navbar-end"><a class="navbar-item search" title="搜索" href="javascript:;"><i class="fas fa-search"></i></a></div></div></div></nav><section class="section"><div class="container"><div class="columns"><div class="column order-2 column-main is-8-tablet is-8-desktop is-8-widescreen"><div class="card"><article class="card-content article" role="article"><div class="article-meta is-size-7 is-uppercase level is-mobile"><div class="level-left"><span class="level-item"><time dateTime="2024-03-22T15:30:28.000Z" title="2024/3/22 23:30:28">2024-03-22</time>发表</span><span class="level-item"><time dateTime="2024-03-24T13:06:32.792Z" title="2024/3/24 21:06:32">2024-03-24</time>更新</span><span class="level-item">9 分钟读完 (大约1315个字)</span></div></div><h1 class="title is-3 is-size-4-mobile">brpc实现原理(1)-DoublyBufferedData</h1><div class="content"><h1 id="DoublyBufferedData"><a href="#DoublyBufferedData" class="headerlink" title="DoublyBufferedData"></a>DoublyBufferedData</h1><p><strong>DoublyBufferedData</strong>(简称DBD)是一个brpc中实现的<strong>双缓冲区</strong>+<strong>Thread Local缓存</strong>的数据结构，主要用于<strong>多读少写</strong>的场景，如负载均衡场景：每次请求都需要选择合适的下游节点，但下游服务器列表更新不可能很频繁。本文以brpc release-1.2.0的DBD代码为主进行分析，因为这个版本的代码比较简洁，后续版本整体实现思想没变，只是针对一些极端场景做了改进，如解决pthread_key存在上限的问题，bthread suspended问题等。</p>
+<p><strong>我将brpc里的DBD代码单独提取了出来，将brpc相关依赖换成了c++的STL库函数，写了完整且纤细的注释，并添加了一个模拟RoundRobin负载均衡的example，以方便理解这一数据结构，具体见<a target="_blank" rel="noopener" href="https://github.com/HongWuL/CppCodeNotes/tree/main/Containers/DoublyBufferedData">github</a>。</strong></p>
+<h2 id="数据结构"><a href="#数据结构" class="headerlink" title="数据结构"></a>数据结构</h2><p>DBD主要存储两类数据:</p>
+<ul>
+<li><code>&lt;T&gt;</code>类型的双缓冲数据，一般为c++容器里的数据如vector。该数据有两个副本，叫做前台数据(fg)和后台数据(bg)。读操作读的是前台数据，修改操作之在后台数据上进行。</li>
+<li><code>&lt;TLS&gt;</code>类型的Thread Local缓存。该结构旨在存储专属于本线程的数据，以减少线程之间的数据竞争。</li>
+</ul>
+<p>DBD的主要结构如下:</p>
+<ul>
+<li>原子变量<code>_index</code>指向的是双缓冲结构的前台数据，可能是<code>_data[0]</code>,也可能是<code>_data[1]</code>。</li>
+<li>线程通过<code>_wapper_key</code>的<code>pthread_setspecific</code>与某一Wrapper绑定，然后通过<code>pthread_getspecific</code> 获取当前线程绑定的<code>Wrapper*</code>，进而获取TLS数据。</li>
+</ul>
+<p>DBD示意图：</p>
+<p><img src="https://pic.imgdb.cn/item/660020819f345e8d037b0205.png" alt="dbd1"></p>
+<blockquote>
+<p>ps: 所有的<code>Wrapper*</code>在所有线程中都是可见的，只是实践过程中通过<code>_wapper_key</code> 获得了当前线程绑定的<code>Wrapper*</code> 。</p>
+</blockquote>
+<h2 id="读-改操作"><a href="#读-改操作" class="headerlink" title="读&amp;改操作"></a>读&amp;改操作</h2><h3 id="Read-ScopedPtr-ptr"><a href="#Read-ScopedPtr-ptr" class="headerlink" title="Read(ScopedPtr* ptr)"></a>Read(ScopedPtr* ptr)</h3><p>ScopedPtr用于提取核心数据：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">ScopedPtr</span> &#123;</span><br><span class="line"><span class="comment">// 类似于一个代理，通过该类获取缓冲数据和TLS数据</span></span><br><span class="line"><span class="comment">// _data指向存储的数据</span></span><br><span class="line"><span class="comment">// _w指向Wrapper包含的TLS数据</span></span><br><span class="line"><span class="keyword">friend</span> <span class="keyword">class</span> <span class="title class_">DoublyBufferedData</span>;</span><br><span class="line"><span class="keyword">public</span>:</span><br><span class="line">    <span class="built_in">ScopedPtr</span>() : _data(<span class="literal">NULL</span>), _w(<span class="literal">NULL</span>) &#123;&#125;</span><br><span class="line">    ~<span class="built_in">ScopedPtr</span>() &#123;</span><br><span class="line">        <span class="keyword">if</span> (_w) &#123;</span><br><span class="line">            _w-&gt;<span class="built_in">EndRead</span>();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="function"><span class="type">const</span> T* <span class="title">get</span><span class="params">()</span> <span class="type">const</span> </span>&#123; <span class="keyword">return</span> _data; &#125;</span><br><span class="line">    <span class="type">const</span> T&amp; <span class="keyword">operator</span>*() <span class="type">const</span> &#123; <span class="keyword">return</span> *_data; &#125;</span><br><span class="line">    <span class="type">const</span> T* <span class="keyword">operator</span>-&gt;() <span class="type">const</span> &#123; <span class="keyword">return</span> _data; &#125;</span><br><span class="line">    <span class="function">TLS&amp; <span class="title">tls</span><span class="params">()</span> </span>&#123; <span class="keyword">return</span> _w-&gt;<span class="built_in">user_tls</span>(); &#125;   <span class="comment">//返回TLS数据</span></span><br><span class="line">    </span><br><span class="line"><span class="keyword">private</span>:</span><br><span class="line">    <span class="type">const</span> T* _data; <span class="comment">//所有线程共享的数据（即双缓冲数据）</span></span><br><span class="line">    Wrapper* _w;    <span class="comment">//Thread local数据</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
 
+<p>读操作是将前台数据以及当前线程的TLS数据读到ptr中。</p>
+<p>读的过程中每个Wrapper会加一个锁，但由于Wrapper和thread绑定，因此这个锁竞争很小。但是也不是不会有竞争，什么情况下会产生竞争呢？当其Modify线程修改完后台时，想要切换前后台，此时会产生一个很小的竞争，具体情况在后面的<strong>时序图</strong>中展示。</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="keyword">typename</span> T, <span class="keyword">typename</span> TLS&gt;</span><br><span class="line"><span class="keyword">class</span> <span class="title class_">DoublyBufferedData</span>&lt;T, TLS&gt;::Wrapper</span><br><span class="line">    : <span class="keyword">public</span> DoublyBufferedDataWrapperBase&lt;T, TLS&gt; &#123;</span><br><span class="line"><span class="keyword">friend</span> <span class="keyword">class</span> <span class="title class_">DoublyBufferedData</span>;</span><br><span class="line"><span class="keyword">public</span>:</span><br><span class="line">    <span class="function"><span class="keyword">explicit</span> <span class="title">Wrapper</span><span class="params">(DoublyBufferedData* c)</span> : _control(c) &#123;</span></span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    ~<span class="built_in">Wrapper</span>() &#123;</span><br><span class="line">        <span class="keyword">if</span> (_control != <span class="literal">NULL</span>) &#123;</span><br><span class="line">            _control-&gt;<span class="built_in">RemoveWrapper</span>(<span class="keyword">this</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// _mutex will be locked by the calling pthread and DoublyBufferedData.</span></span><br><span class="line">    <span class="comment">// Most of the time, no modifications are done, so the mutex is</span></span><br><span class="line">    <span class="comment">// uncontended and fast.</span></span><br><span class="line">    <span class="comment">// 在同一个线程中使用，锁基本无竞争</span></span><br><span class="line">    <span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">BeginRead</span><span class="params">()</span> </span>&#123;</span><br><span class="line">        _mutex.<span class="built_in">lock</span>();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">EndRead</span><span class="params">()</span> </span>&#123;</span><br><span class="line">        _mutex.<span class="built_in">unlock</span>();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">WaitReadDone</span><span class="params">()</span> </span>&#123;</span><br><span class="line">        <span class="comment">// 等待读结束，以便切换fg和bg</span></span><br><span class="line">        <span class="function">std::lock_guard&lt;std::mutex&gt; <span class="title">lock</span><span class="params">(_mutex)</span></span>;</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line"><span class="keyword">private</span>:</span><br><span class="line">    DoublyBufferedData* _control;  </span><br><span class="line">    std::mutex _mutex;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
 
-<script src="/js/main.js"></script>
+<h3 id="Modify"><a href="#Modify" class="headerlink" title="Modify"></a>Modify</h3><p>根据传入的函数<code>Fn</code>修改双缓冲的数据。</p>
+<p>为了减少锁竞争，先修改后台数据，修改过程中读前台数据不受影响。当修改完数据之后，切换前后台，即更改<code>_index</code> 的值。在修改的过程中，有的线程可能旧前台数据还没读完，因此还不能马上修改旧前台(新后台)，因此通过尝试获取其它读线程的锁(也就是上面的<code>_mutex</code>)，来确认所有线程都读完旧前台了，那么就可以对旧前台进行同样的修改操作。</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="keyword">typename</span> T, <span class="keyword">typename</span> TLS&gt;</span><br><span class="line"><span class="keyword">template</span> &lt;<span class="keyword">typename</span> Fn&gt;</span><br><span class="line"><span class="type">size_t</span> DoublyBufferedData&lt;T, TLS&gt;::<span class="built_in">Modify</span>(Fn&amp; fn) &#123;</span><br><span class="line">    <span class="comment">// _modify_mutex sequences modifications. Using a separate mutex rather</span></span><br><span class="line">    <span class="comment">// than _wrappers_mutex is to avoid blocking threads calling</span></span><br><span class="line">    <span class="comment">// AddWrapper() or RemoveWrapper() too long. Most of the time, modifications</span></span><br><span class="line">    <span class="comment">// are done by one thread, contention should be negligible.</span></span><br><span class="line">    <span class="function">std::lock_guard&lt;std::mutex&gt; <span class="title">lock</span><span class="params">(_modify_mutex)</span></span>;</span><br><span class="line">    <span class="type">int</span> bg_index = !_index.<span class="built_in">load</span>(std::memory_order_relaxed);</span><br><span class="line">    <span class="comment">// background instance is not accessed by other threads, being safe to</span></span><br><span class="line">    <span class="comment">// modify.</span></span><br><span class="line">    <span class="comment">// 修改bg</span></span><br><span class="line">    <span class="type">const</span> <span class="type">size_t</span> ret = <span class="built_in">fn</span>(_data[bg_index]);</span><br><span class="line">    <span class="keyword">if</span> (!ret) &#123;</span><br><span class="line">        <span class="comment">// 修改失败</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Publish, flip background and foreground.</span></span><br><span class="line">    <span class="comment">// The release fence matches with the acquire fence in UnsafeRead() to</span></span><br><span class="line">    <span class="comment">// make readers which just begin to read the new foreground instance see</span></span><br><span class="line">    <span class="comment">// all changes made in fn.</span></span><br><span class="line">    <span class="comment">// 切换前后台</span></span><br><span class="line">    _index.<span class="built_in">store</span>(bg_index, std::memory_order_release);</span><br><span class="line">    bg_index = !bg_index;</span><br><span class="line">    </span><br><span class="line">    <span class="comment">// Wait until all threads finishes current reading. When they begin next</span></span><br><span class="line">    <span class="comment">// read, they should see updated _index.</span></span><br><span class="line">    <span class="comment">// 等待每个旧的前台读完，认为是前台看到新的前台了</span></span><br><span class="line">    &#123;</span><br><span class="line">        <span class="function">std::lock_guard&lt;std::mutex&gt; <span class="title">lock</span><span class="params">(_wrappers_mutex)</span></span>;</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">size_t</span> i = <span class="number">0</span>; i &lt; _wrappers.<span class="built_in">size</span>(); ++i) &#123;</span><br><span class="line">            _wrappers[i]-&gt;<span class="built_in">WaitReadDone</span>();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">// 修改新后台(旧前台)</span></span><br><span class="line">    <span class="type">const</span> <span class="type">size_t</span> ret2 = <span class="built_in">fn</span>(_data[bg_index]);</span><br><span class="line">    <span class="keyword">return</span> ret2;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
-<!-- search -->
-
-<!-- Baidu Analytics -->
-
-<!-- Cloudflare Analytics -->
-
-<!-- Disqus Comments -->
-
-<!-- utterances Comments -->
-
-</body>
-</html>
+<h4 id="Read-Modify示意图"><a href="#Read-Modify示意图" class="headerlink" title="Read &amp;Modify示意图"></a>Read &amp;Modify示意图</h4><p><img src="https://pic.imgdb.cn/item/660020829f345e8d037b072b.pngg" alt="dbd2"></p>
+<h4 id="Read-Modify锁时序图"><a href="#Read-Modify锁时序图" class="headerlink" title="Read &amp;Modify锁时序图"></a>Read &amp;Modify锁时序图</h4><p>如下图所示，thread1读旧前台还没结束，modify线程thread2会等待thread1读完才会对旧前台进行修改。</p>
+<p><img src="https://pic.imgdb.cn/item/660020829f345e8d037b0c50.png" alt="dbd3"></p>
+</div><div class="article-licensing box"><div class="licensing-title"><p>brpc实现原理(1)-DoublyBufferedData</p><p><a href="http://example.com/2024/03/22/brpc实现原理-1-DoublyBufferedData/">http://example.com/2024/03/22/brpc实现原理-1-DoublyBufferedData/</a></p></div><div class="licensing-meta level is-mobile"><div class="level-left"><div class="level-item is-narrow"><div><h6>作者</h6><p>Lyu</p></div></div><div class="level-item is-narrow"><div><h6>发布于</h6><p>2024-03-22</p></div></div><div class="level-item is-narrow"><div><h6>更新于</h6><p>2024-03-24</p></div></div><div class="level-item is-narrow"><div><h6>许可协议</h6><p><a class="icons" rel="noopener" target="_blank" title="Creative Commons" href="https://creativecommons.org/"><i class="icon fab fa-creative-commons"></i></a><a class="icons" rel="noopener" target="_blank" title="Attribution" href="https://creativecommons.org/licenses/by/4.0/"><i class="icon fab fa-creative-commons-by"></i></a><a class="icons" rel="noopener" target="_blank" title="Noncommercial" href="https://creativecommons.org/licenses/by-nc/4.0/"><i class="icon fab fa-creative-commons-nc"></i></a></p></div></div></div></div></div><div class="article-tags is-size-7 mb-4"><span class="mr-2">#</span><a class="link-muted mr-2" rel="tag" href="/tags/c-brpc-%E5%BE%AE%E6%9C%8D%E5%8A%A1/">c++,brpc,微服务</a></div><!--!--></article></div><!--!--><nav class="post-navigation mt-4 level is-mobile"><div class="level-end"><a class="article-nav-next level level-item link-muted" href="/2024/02/29/hello-world/"><span class="level-item">Hello World</span><i class="level-item fas fa-chevron-right"></i></a></div></nav><!--!--></div><div class="column column-left is-4-tablet is-4-desktop is-4-widescreen  order-1"><div class="card widget" data-type="profile"><div class="card-content"><nav class="level"><div class="level-item has-text-centered flex-shrink-1"><div><figure class="image is-128x128 mx-auto mb-2"><img class="avatar" src="/img/avatar.png" alt="Lyu"></figure><p class="title is-size-4 is-block" style="line-height:inherit;">Lyu</p><p class="is-size-6 is-block">世界是一个巨大的草台班子</p><p class="is-size-6 is-flex justify-content-center"><i class="fas fa-map-marker-alt mr-1"></i><span>Beijing</span></p></div></div></nav><nav class="level is-mobile"><div class="level-item has-text-centered is-marginless"><div><p class="heading">文章</p><a href="/archives"><p class="title">2</p></a></div></div><div class="level-item has-text-centered is-marginless"><div><p class="heading">分类</p><a href="/categories"><p class="title">0</p></a></div></div><div class="level-item has-text-centered is-marginless"><div><p class="heading">标签</p><a href="/tags"><p class="title">1</p></a></div></div></nav><div class="level is-mobile is-multiline"><a class="level-item button is-transparent is-marginless" target="_blank" rel="noopener" title="Github" href="https://github.com/HongWuL"><i class="fab fa-github"></i></a></div></div></div><!--!--><!--!--><div class="card widget" data-type="recent-posts"><div class="card-content"><h3 class="menu-label">最新文章</h3><article class="media"><div class="media-content"><p class="date"><time dateTime="2024-03-22T15:30:28.000Z">2024-03-22</time></p><p class="title"><a href="/2024/03/22/brpc%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86-1-DoublyBufferedData/">brpc实现原理(1)-DoublyBufferedData</a></p></div></article><article class="media"><div class="media-content"><p class="date"><time dateTime="2024-02-29T12:11:14.994Z">2024-02-29</time></p><p class="title"><a href="/2024/02/29/hello-world/">Hello World</a></p></div></article></div></div><div class="card widget" data-type="archives"><div class="card-content"><div class="menu"><h3 class="menu-label">归档</h3><ul class="menu-list"><li><a class="level is-mobile" href="/archives/2024/03/"><span class="level-start"><span class="level-item">三月 2024</span></span><span class="level-end"><span class="level-item tag">1</span></span></a></li><li><a class="level is-mobile" href="/archives/2024/02/"><span class="level-start"><span class="level-item">二月 2024</span></span><span class="level-end"><span class="level-item tag">1</span></span></a></li></ul></div></div></div><div class="card widget" data-type="tags"><div class="card-content"><div class="menu"><h3 class="menu-label">标签</h3><div class="field is-grouped is-grouped-multiline"><div class="control"><a class="tags has-addons" href="/tags/c-brpc-%E5%BE%AE%E6%9C%8D%E5%8A%A1/"><span class="tag">c++,brpc,微服务</span><span class="tag">1</span></a></div></div></div></div></div></div><!--!--></div></div></section><footer class="footer"><div class="container"><div class="level"><div class="level-start"><a class="footer-logo is-block mb-2" href="/"><img src="/img/logo.svg" alt="Hexo" height="28"></a><p class="is-size-7"><span>&copy; 2024 Lyu</span>  Powered by <a href="https://hexo.io/" target="_blank" rel="noopener">Hexo</a> &amp; <a href="https://github.com/ppoffice/hexo-theme-icarus" target="_blank" rel="noopener">Icarus</a></p><p class="is-size-7">© 2024</p></div><div class="level-end"><div class="field has-addons"><p class="control"><a class="button is-transparent is-large" target="_blank" rel="noopener" title="Creative Commons" href="https://creativecommons.org/"><i class="fab fa-creative-commons"></i></a></p><p class="control"><a class="button is-transparent is-large" target="_blank" rel="noopener" title="Attribution 4.0 International" href="https://creativecommons.org/licenses/by/4.0/"><i class="fab fa-creative-commons-by"></i></a></p><p class="control"><a class="button is-transparent is-large" target="_blank" rel="noopener" title="Download on GitHub" href="https://github.com/ppoffice/hexo-theme-icarus"><i class="fab fa-github"></i></a></p></div></div></div></div></footer><script src="https://cdn.jsdelivr.net/npm/jquery@3.3.1/dist/jquery.min.js"></script><script src="https://cdn.jsdelivr.net/npm/moment@2.22.2/min/moment-with-locales.min.js"></script><script src="https://cdn.jsdelivr.net/npm/clipboard@2.0.4/dist/clipboard.min.js" defer></script><script>moment.locale("zh-cn");</script><script>var IcarusThemeSettings = {
+            article: {
+                highlight: {
+                    clipboard: true,
+                    fold: 'unfolded'
+                }
+            }
+        };</script><script src="/js/column.js"></script><script src="/js/animation.js"></script><a id="back-to-top" title="回到顶端" href="javascript:;"><i class="fas fa-chevron-up"></i></a><script src="/js/back_to_top.js" defer></script><!--!--><!--!--><!--!--><script src="https://cdn.jsdelivr.net/npm/cookieconsent@3.1.1/build/cookieconsent.min.js" defer></script><script>window.addEventListener("load", () => {
+      window.cookieconsent.initialise({
+        type: "info",
+        theme: "edgeless",
+        static: false,
+        position: "bottom-left",
+        content: {
+          message: "此网站使用Cookie来改善您的体验。",
+          dismiss: "知道了！",
+          allow: "允许使用Cookie",
+          deny: "拒绝",
+          link: "了解更多",
+          policy: "Cookie政策",
+          href: "https://www.cookiesandyou.com/",
+        },
+        palette: {
+          popup: {
+            background: "#edeff5",
+            text: "#838391"
+          },
+          button: {
+            background: "#4b81e8"
+          },
+        },
+      });
+    });</script><script src="https://cdn.jsdelivr.net/npm/lightgallery@1.10.0/dist/js/lightgallery.min.js" defer></script><script src="https://cdn.jsdelivr.net/npm/justifiedGallery@3.8.1/dist/js/jquery.justifiedGallery.min.js" defer></script><script>window.addEventListener("load", () => {
+            if (typeof $.fn.lightGallery === 'function') {
+                $('.article').lightGallery({ selector: '.gallery-item' });
+            }
+            if (typeof $.fn.justifiedGallery === 'function') {
+                if ($('.justified-gallery > p > .gallery-item').length) {
+                    $('.justified-gallery > p > .gallery-item').unwrap();
+                }
+                $('.justified-gallery').justifiedGallery();
+            }
+        });</script><!--!--><!--!--><!--!--><!--!--><!--!--><script src="/js/main.js" defer></script><div class="searchbox"><div class="searchbox-container"><div class="searchbox-header"><div class="searchbox-input-container"><input class="searchbox-input" type="text" placeholder="想要查找什么..."></div><a class="searchbox-close" href="javascript:;">×</a></div><div class="searchbox-body"></div></div></div><script src="/js/insight.js" defer></script><script>document.addEventListener('DOMContentLoaded', function () {
+            loadInsight({"contentUrl":"/content.json"}, {"hint":"想要查找什么...","untitled":"(无标题)","posts":"文章","pages":"页面","categories":"分类","tags":"标签"});
+        });</script></body></html>
